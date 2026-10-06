@@ -1,1 +1,62 @@
+name: RDP
 
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name 'fDenyTSConnections' `
+            -Value 0
+
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name 'UserAuthentication' `
+            -Value 1
+
+          Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+
+          Restart-Service TermService -Force
+
+      - name: Create RDP user
+        shell: powershell
+        run: |
+          $password = -join ((33..126) | Get-Random -Count 24 | ForEach-Object {[char]$_})
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+
+          New-LocalUser `
+            -Name 'RDP' `
+            -Password $securePassword `
+            -AccountNeverExpires
+
+          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
+
+          "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+
+      - name: Show Tailscale IP
+        shell: powershell
+        run: |
+          $ip = tailscale ip -4
+          Write-Host "Tailscale IP: $ip"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $env:RDP_PASSWORD"
+
+      - name: Keep runner alive
+        shell: powershell
+        run: |
+          while ($true) {
+            Start-Sleep -Seconds 60
+          }
